@@ -91,7 +91,7 @@ jobs:
           env:
             CC: gcc
             CMAKE_GENERATOR: Ninja
-            CMAKE_OPTIONS: -DUSE_HTTPS=OpenSSL -DREGEX_BACKEND=builtin -DDEPRECATE_HARD=ON -DUSE_LEAK_CHECKER=valgrind -DUSE_GSSAPI=ON -DUSE_SSH=ON -DDEBUG_STRICT_ALLOC=ON -DDEBUG_STRICT_OPEN=ON
+            CMAKE_OPTIONS: -DUSE_HTTPS=OpenSSL -DUSE_SSH=libssh2 -DREGEX_BACKEND=builtin -DDEPRECATE_HARD=ON -DUSE_LEAK_CHECKER=valgrind -DUSE_GSSAPI=ON -DDEBUG_STRICT_ALLOC=ON -DDEBUG_STRICT_OPEN=ON
           os: ubuntu-latest
         - name: Linux (Xenial, GCC, mbedTLS)
           id: xenial-gcc-mbedtls
@@ -176,6 +176,16 @@ jobs:
         # Sanitizers
         - name: "Sanitizer (Memory)"
           id: memorysanitizer
+          container:
+            name: xenial
+          env:
+            CC: gcc
+            CMAKE_GENERATOR: Ninja
+            CMAKE_OPTIONS: -DUSE_HTTPS=OpenSSL -DUSE_SSH=libssh -DREGEX_BACKEND=builtin -DDEPRECATE_HARD=ON -DUSE_LEAK_CHECKER=valgrind -DUSE_GSSAPI=ON -DDEBUG_STRICT_ALLOC=ON -DDEBUG_STRICT_OPEN=ON
+          os: ubuntu-latest
+        - # Focal, Clang 10, mbedTLS, MemorySanitizer
+          - name: "Linux (Xenial, GCC, OpenSSL)"
+          id: xenial-gcc-openssl
           container:
             name: focal
           env:
