@@ -331,11 +331,15 @@ static int _git_ssh_setup_conn(
 
 	if (t->owner->connect_opts.callbacks.certificate_check != NULL) {
 		git_cert_hostkey cert = {{ 0 }}, *cert_ptr;
+		int valid;
 
 		if ((error = git_ssh_session_server_hostkey(session, &cert)) < 0)
 			goto done;
 
 		/* We don't currently trust any hostkeys */
+		if ((error = git_ssh_session_server_is_known(session, &valid)) < 0)
+			goto done;
+
 		git_error_clear();
 
 		cert_ptr = &cert;
