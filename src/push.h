@@ -42,6 +42,7 @@ struct git_push {
 	/* options */
 	unsigned pb_parallelism;
 	git_remote_connection_opts connection;
+	git_strarray *arguments;
 };
 
 /**

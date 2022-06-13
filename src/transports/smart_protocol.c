@@ -196,6 +196,12 @@ int git_smart__detect_caps(git_pkt_ref *pkt, transport_smart_caps *caps, git_vec
 			continue;
 		}
 
+		if (!git__prefixcmp(ptr, GIT_CAP_PUSH_ARGUMENTS)) {
+			caps->common = caps->push_arguments = 1;
+			ptr += strlen(GIT_CAP_PUSH_ARGUMENTS);
+			continue;
+		}
+
 		if (!git__prefixcmp(ptr, GIT_CAP_SYMREF)) {
 			int error;
 
@@ -626,7 +632,7 @@ done:
 	return error;
 }
 
-static int gen_pktline(git_buf *buf, git_push *push)
+static int gen_pktline(git_buf *buf, git_push *push, const transport_smart_caps *caps)
 {
 	push_spec *spec;
 	size_t i, len;
@@ -642,6 +648,9 @@ static int gen_pktline(git_buf *buf, git_push *push)
 			if (push->report_status)
 				len += strlen(GIT_CAP_REPORT_STATUS) + 1;
 			len += strlen(GIT_CAP_SIDE_BAND_64K) + 1;
+
+			if (caps->push_arguments && push->arguments != NULL)
+				len += strlen(GIT_CAP_PUSH_ARGUMENTS) + 1;
 		}
 
 		git_oid_fmt(old_id, &spec->roid);
@@ -658,12 +667,27 @@ static int gen_pktline(git_buf *buf, git_push *push)
 			}
 			git_buf_putc(buf, ' ');
 			git_buf_printf(buf, GIT_CAP_SIDE_BAND_64K);
+
+			if (caps->push_arguments && push->arguments != NULL) {
+				git_buf_putc(buf, ' ');
+				git_buf_printf(buf, GIT_CAP_PUSH_ARGUMENTS);
+			}
 		}
 
 		git_buf_putc(buf, '\n');
 	}
 
 	git_buf_puts(buf, "0000");
+
+	if (caps->push_arguments && push->arguments != NULL) {
+		for (i = 0; i < push->arguments->count; i++) {
+			const char *argument = push->arguments->strings[i];
+			git_buf_printf(buf, "%04"PRIxZ"%s", strlen(argument) + 4, argument);
+		}
+		/* must include if push options is enabled (even if empty string) */
+		git_buf_puts(buf, "0000");
+	}
+
 	return git_buf_oom(buf) ? -1 : 0;
 }
 
@@ -1035,7 +1059,7 @@ int git_smart__push(git_transport *transport, git_push *push, const git_remote_c
 	}
 
 	if ((error = git_smart__get_push_stream(t, &packbuilder_payload.stream)) < 0 ||
-		(error = gen_pktline(&pktline, push)) < 0 ||
+		(error = gen_pktline(&pktline, push, &t->caps)) < 0 ||
 		(error = packbuilder_payload.stream->write(packbuilder_payload.stream, git_buf_cstr(&pktline), git_buf_len(&pktline))) < 0)
 		goto done;
 

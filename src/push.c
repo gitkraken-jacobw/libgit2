@@ -42,14 +42,18 @@ int git_push_new(git_push **out, git_remote *remote)
 	p->remote = remote;
 	p->report_status = 1;
 	p->pb_parallelism = 1;
+	p->arguments = git__malloc(sizeof(*p->arguments));
+	GIT_ERROR_CHECK_ALLOC(p->arguments);
 
 	if (git_vector_init(&p->specs, 0, push_spec_rref_cmp) < 0) {
+		git_strarray_dispose(p->arguments);
 		git__free(p);
 		return -1;
 	}
 
 	if (git_vector_init(&p->status, 0, push_status_ref_cmp) < 0) {
 		git_vector_free(&p->specs);
+		git_strarray_dispose(p->arguments);
 		git__free(p);
 		return -1;
 	}
@@ -57,6 +61,7 @@ int git_push_new(git_push **out, git_remote *remote)
 	if (git_vector_init(&p->updates, 0, NULL) < 0) {
 		git_vector_free(&p->status);
 		git_vector_free(&p->specs);
+		git_strarray_dispose(p->arguments);
 		git__free(p);
 		return -1;
 	}
@@ -75,6 +80,10 @@ int git_push_set_options(git_push *push, const git_push_options *opts)
 	push->pb_parallelism = opts->pb_parallelism;
 	push->connection.custom_headers = &opts->custom_headers;
 	push->connection.proxy = &opts->proxy_opts;
+
+	if (git_strarray_copy(push->arguments, &opts->arguments) < 0) {
+		return -1;
+	}
 
 	return 0;
 }
@@ -544,6 +553,8 @@ void git_push_free(git_push *push)
 		git__free(update);
 	}
 	git_vector_free(&push->updates);
+
+	git_strarray_dispose(push->arguments);
 
 	git__free(push);
 }
