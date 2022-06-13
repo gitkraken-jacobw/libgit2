@@ -41,8 +41,7 @@ RUN cd /tmp && \
 
 FROM mbedtls AS libssh2
 RUN cd /tmp && \
-    curl --insecure --location --silent --show-error https://www.libssh2.org/download/libssh2-1.8.2.tar.gz | \
-    tar -xz && \
+    curl --location --silent --show-error https://www.libssh2.org/download/libssh2-1.8.2.tar.gz | tar -xz && \
     cd libssh2-1.8.2 && \
     CFLAGS=-fPIC cmake -G Ninja -DBUILD_SHARED_LIBS=ON -DCRYPTO_BACKEND=Libgcrypt . && \
     ninja install && \
@@ -61,7 +60,13 @@ RUN cd /tmp && \
     rm -rf valgrind-3.15.0
 
 FROM valgrind AS adduser
-RUN useradd --shell /bin/bash libgit2 --create-home
+ARG UID=""
+ARG GID=""
+RUN if [ "${UID}" != "" ]; then USER_ARG="--uid ${UID}"; fi && \
+    if [ "${GID}" != "" ]; then GROUP_ARG="--gid ${GID}"; fi && \
+    groupadd ${GROUP_ARG} libgit2 && \
+    useradd ${USER_ARG} --gid libgit2 --shell /bin/bash --create-home libgit2
+
 
 FROM adduser AS configure
 RUN mkdir /var/run/sshd

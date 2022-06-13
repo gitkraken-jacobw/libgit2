@@ -17,6 +17,7 @@ TMPDIR=${TMPDIR:-/tmp}
 USER=${USER:-$(whoami)}
 
 SUCCESS=1
+CONTINUE_ON_FAILURE=0
 
 cleanup() {
 	echo "Cleaning up..."
@@ -64,6 +65,10 @@ run_test() {
 	done
 
 	if [ "$FAILED" -ne 0 ]; then
+		if [ "$CONTINUE_ON_FAILURE" -ne 1 ]; then
+			exit 1
+		fi
+
 		SUCCESS=0
 	fi
 }
@@ -78,7 +83,15 @@ echo "##########################################################################
 if [ -z "$SKIP_GITDAEMON_TESTS" ]; then
 	echo "Starting git daemon..."
 	GITDAEMON_DIR=`mktemp -d ${TMPDIR}/gitdaemon.XXXXXXXX`
-	git init --bare "${GITDAEMON_DIR}/test.git"
+	git init --bare "${GITDAEMON_DIR}/test.git" >/dev/null
+	git config --file "${GITDAEMON_DIR}/test.git/config" receive.advertisePushOptions true
+
+	for f in hooks/*
+	do
+		sed "s=%file%=${TMPDIR}/push-option-result-git-daemon=g" $f > "${GITDAEMON_DIR}/test.git/${f}"
+		chmod +x "$GITDAEMON_DIR/test.git/${f}"
+	done
+
 	git daemon --listen=localhost --export-all --enable=receive-pack --base-path="${GITDAEMON_DIR}" "${GITDAEMON_DIR}" 2>/dev/null &
 	GITDAEMON_PID=$!
 	disown $GITDAEMON_PID
@@ -96,21 +109,38 @@ if [ -z "$SKIP_PROXY_TESTS" ]; then
 	java -jar poxyproxy.jar --address 127.0.0.1 --port 8090 --credentials foo:bar --auth-type ntlm --quiet &
 fi
 
-if [ -z "$SKIP_NTLM_TESTS" ]; then
-	curl --location --silent --show-error https://github.com/ethomson/poxygit/releases/download/v0.4.0/poxygit-0.4.0.jar >poxygit.jar
+if [ -z "$SKIP_NTLM_TESTS" -o -z "$SKIP_ONLINE_TESTS" ]; then
+	curl --location --silent --show-error https://github.com/ethomson/poxygit/releases/download/v0.5.1/poxygit-0.5.1.jar >poxygit.jar
 
 	echo ""
 	echo "Starting HTTP server..."
 	NTLM_DIR=`mktemp -d ${TMPDIR}/ntlm.XXXXXXXX`
 	git init --bare "${NTLM_DIR}/test.git"
+	git config --file "${NTLM_DIR}/test.git/config" receive.advertisePushOptions true
+
+	for f in hooks/*
+	do
+		sed "s=%file%=${TMPDIR}/push-option-result-git-ntlm=g" $f > "${NTLM_DIR}/test.git/${f}"
+		chmod +x "$NTLM_DIR/test.git/${f}"
+	done
+
 	java -jar poxygit.jar --address 127.0.0.1 --port 9000 --credentials foo:baz --quiet "${NTLM_DIR}" &
 fi
 
 if [ -z "$SKIP_SSH_TESTS" ]; then
+	echo ""
 	echo "Starting ssh daemon..."
 	HOME=`mktemp -d ${TMPDIR}/home.XXXXXXXX`
 	SSHD_DIR=`mktemp -d ${TMPDIR}/sshd.XXXXXXXX`
-	git init --bare "${SSHD_DIR}/test.git"
+	git init --bare "${SSHD_DIR}/test.git" >/dev/null
+	git config --file "${SSHD_DIR}/test.git/config" receive.advertisePushOptions true
+
+	for f in hooks/*
+	do
+		sed "s=%file%=${TMPDIR}/push-option-result-git-ssh=g" $f > "${SSHD_DIR}/test.git/${f}"
+		chmod +x "$SSHD_DIR/test.git/${f}"
+	done
+
 	cat >"${SSHD_DIR}/sshd_config" <<-EOF
 	Port 2222
 	ListenAddress 0.0.0.0
@@ -153,10 +183,18 @@ fi
 if [ -z "$SKIP_OFFLINE_TESTS" ]; then
 	echo ""
 	echo "##############################################################################"
-	echo "## Running (offline) tests"
+	echo "## Running core tests"
 	echo "##############################################################################"
 
+	echo ""
+	echo "Running libgit2 integration (offline) tests"
+	echo ""
 	run_test offline
+
+	echo ""
+	echo "Running utility tests"
+	echo ""
+	run_test util
 fi
 
 if [ -n "$RUN_INVASIVE_TESTS" ]; then
@@ -174,18 +212,28 @@ if [ -n "$RUN_INVASIVE_TESTS" ]; then
 fi
 
 if [ -z "$SKIP_ONLINE_TESTS" ]; then
-	# Run the various online tests.  The "online" test suite only includes the
-	# default online tests that do not require additional configuration.  The
-	# "proxy" and "ssh" test suites require further setup.
+	# Run the online tests.  The "online" test suite only includes the
+	# default online tests that do not require additional configuration.
+	# The "proxy" and "ssh" test suites require further setup.
 
 	echo ""
 	echo "##############################################################################"
-	echo "## Running (online) tests"
+	echo "## Running networking (online) tests"
 	echo "##############################################################################"
 
-	export GITTEST_FLAKY_RETRY=5
+	export GITTEST_REMOTE_REDIRECT_INITIAL="http://localhost:9000/initial-redirect/libgit2/TestGitRepository"
+	export GITTEST_REMOTE_REDIRECT_SUBSEQUENT="http://localhost:9000/subsequent-redirect/libgit2/TestGitRepository"
 	run_test online
-	unset GITTEST_FLAKY_RETRY
+	unset GITTEST_REMOTE_REDIRECT_INITIAL
+	unset GITTEST_REMOTE_REDIRECT_SUBSEQUENT
+
+	# Run the online tests that immutably change global state separately
+	# to avoid polluting the test environment.
+	echo ""
+	echo "Running custom certificate (online_customcert) tests"
+	echo ""
+
+	run_test online_customcert
 fi
 
 if [ -z "$SKIP_GITDAEMON_TESTS" ]; then
@@ -193,8 +241,10 @@ if [ -z "$SKIP_GITDAEMON_TESTS" ]; then
 	echo "Running gitdaemon tests"
 	echo ""
 
+	export GITTEST_PUSH_OPTION_RESULT="${TMPDIR}/push-option-result-git-daemon"
 	export GITTEST_REMOTE_URL="git://localhost/test.git"
 	run_test gitdaemon
+	unset GITTEST_PUSH_OPTION_RESULT
 	unset GITTEST_REMOTE_URL
 fi
 
@@ -218,9 +268,7 @@ if [ -z "$SKIP_PROXY_TESTS" ]; then
 	export GITTEST_REMOTE_PROXY_HOST="localhost:8090"
 	export GITTEST_REMOTE_PROXY_USER="foo"
 	export GITTEST_REMOTE_PROXY_PASS="bar"
-	export GITTEST_FLAKY_RETRY=5
 	run_test proxy
-	unset GITTEST_FLAKY_RETRY
 	unset GITTEST_REMOTE_PROXY_HOST
 	unset GITTEST_REMOTE_PROXY_USER
 	unset GITTEST_REMOTE_PROXY_PASS
@@ -231,10 +279,12 @@ if [ -z "$SKIP_NTLM_TESTS" ]; then
 	echo "Running NTLM tests (IIS emulation)"
 	echo ""
 
+	export GITTEST_PUSH_OPTION_RESULT="${TMPDIR}/push-option-result-ntlm"
 	export GITTEST_REMOTE_URL="http://localhost:9000/ntlm/test.git"
 	export GITTEST_REMOTE_USER="foo"
 	export GITTEST_REMOTE_PASS="baz"
 	run_test auth_clone_and_push
+	unset GITTEST_PUSH_OPTION_RESULT
 	unset GITTEST_REMOTE_URL
 	unset GITTEST_REMOTE_USER
 	unset GITTEST_REMOTE_PASS
@@ -243,10 +293,12 @@ if [ -z "$SKIP_NTLM_TESTS" ]; then
 	echo "Running NTLM tests (Apache emulation)"
 	echo ""
 
+	export GITTEST_PUSH_OPTION_RESULT="${TMPDIR}/push-option-result-ntlm"
 	export GITTEST_REMOTE_URL="http://localhost:9000/broken-ntlm/test.git"
 	export GITTEST_REMOTE_USER="foo"
 	export GITTEST_REMOTE_PASS="baz"
 	run_test auth_clone_and_push
+	unset GITTEST_PUSH_OPTION_RESULT
 	unset GITTEST_REMOTE_URL
 	unset GITTEST_REMOTE_USER
 	unset GITTEST_REMOTE_PASS
@@ -286,18 +338,32 @@ if [ -z "$SKIP_NEGOTIATE_TESTS" -a -n "$GITTEST_NEGOTIATE_PASSWORD" ]; then
 fi
 
 if [ -z "$SKIP_SSH_TESTS" ]; then
-	echo ""
-	echo "Running ssh tests"
-	echo ""
-
-	export GITTEST_REMOTE_URL="ssh://localhost:2222/$SSHD_DIR/test.git"
 	export GITTEST_REMOTE_USER=$USER
 	export GITTEST_REMOTE_SSH_KEY="${HOME}/.ssh/id_rsa"
 	export GITTEST_REMOTE_SSH_PUBKEY="${HOME}/.ssh/id_rsa.pub"
 	export GITTEST_REMOTE_SSH_PASSPHRASE=""
 	export GITTEST_REMOTE_SSH_FINGERPRINT="${SSH_FINGERPRINT}"
+
+	echo ""
+	echo "Running ssh tests"
+	echo ""
+
+	export GITTEST_PUSH_OPTION_RESULT="${TMPDIR}/push-option-result-ssh"
+	export GITTEST_REMOTE_URL="ssh://localhost:2222/$SSHD_DIR/test.git"
 	run_test ssh
+	unset GITTEST_PUSH_OPTION_RESULT
 	unset GITTEST_REMOTE_URL
+
+	echo ""
+	echo "Running ssh tests (scp-style paths)"
+	echo ""
+
+	export GITTEST_PUSH_OPTION_RESULT="${TMPDIR}/push-option-result-ssh"
+	export GITTEST_REMOTE_URL="[localhost:2222]:$SSHD_DIR/test.git"
+	run_test ssh
+	unset GITTEST_PUSH_OPTION_RESULT
+	unset GITTEST_REMOTE_URL
+
 	unset GITTEST_REMOTE_USER
 	unset GITTEST_REMOTE_SSH_KEY
 	unset GITTEST_REMOTE_SSH_PUBKEY
